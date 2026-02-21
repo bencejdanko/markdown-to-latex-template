@@ -1,0 +1,51 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+% Pandoc emits \tightlist for compact lists.
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+% Pandoc (newer versions) wraps images in \pandocbounded.
+\providecommand{\pandocbounded}[1]{#1}
+% Keep figures within column/page bounds
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>0.78\textheight 0.78\textheight\else\Gin@nat@height\fi}
+\makeatother
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+
+\title{{{TITLE}}{{TITLE_THANKS}}}
+
+\author{{{AUTHORS}}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+{{ABSTRACT}}
+\end{abstract}
+
+\begin{IEEEkeywords}
+{{INDEX_TERMS}}
+\end{IEEEkeywords}
+
+{{BODY_LATEX}}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

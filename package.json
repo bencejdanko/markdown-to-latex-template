@@ -1,0 +1,15 @@
+{
+  "name": "markdown-to-latex-template",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "API service that compiles Markdown + BibTeX into PDFs via Pandoc and LaTeX templates.",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}
