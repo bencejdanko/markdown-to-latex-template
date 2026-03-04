@@ -14,6 +14,9 @@
  *   "markdown":    string,       // raw markdown body (no frontmatter)
  *   "references":  string,       // .bib file content
  *   "template":    string,       // template name, e.g. "ieee-conference"
+ *   "appendices": [              // optional appendix markdown blocks
+ *     { "title": string, "markdown": string }
+ *   ],
  *   "frontmatter": {
  *     "title":       string,
  *     "description": string,
@@ -135,13 +138,16 @@ app.post(
       return res.status(400).json({ error: "Field 'data' must be valid JSON" });
     }
 
-    const { markdown, references, template, frontmatter } = payload;
+    const { markdown, references, template, frontmatter, appendices } = payload;
 
     if (typeof markdown !== "string" || !markdown.trim()) {
       return res.status(400).json({ error: "data.markdown is required" });
     }
     if (typeof template !== "string" || !template.trim()) {
       return res.status(400).json({ error: "data.template is required" });
+    }
+    if (appendices !== undefined && !Array.isArray(appendices)) {
+      return res.status(400).json({ error: "data.appendices must be an array" });
     }
 
     // Build asset map from uploaded files
@@ -172,6 +178,7 @@ app.post(
         frontmatter: frontmatter ?? {},
         references: references ?? "",
         template,
+        appendices: appendices ?? [],
         assets: assetMap,
       });
     } catch (err) {

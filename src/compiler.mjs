@@ -31,7 +31,22 @@ const TABLE_CAPTION_SPLIT_TOKEN = "PDFCAPSPLITTOKEN";
 // ---------------------------------------------------------------------------
 
 function normalizeBibForBibtex(bibText) {
-  return bibText.replace(/@online\s*\{/gi, "@misc{");
+  let out = String(bibText ?? "");
+
+  // BibTeX doesn't support these entry types in classic styles.
+  out = out
+    .replace(/@online\s*\{/gi, "@misc{")
+    .replace(/@software\s*\{/gi, "@misc{");
+
+  // Tolerate accidental JS-style line comments in .bib files.
+  out = out.replace(/^\s*\/\/.*$/gm, "");
+
+  // Normalize Unicode dash variants that can break BibTeX parsing.
+  out = out
+    .replace(/\u2013/g, "--")
+    .replace(/\u2014/g, "---");
+
+  return out;
 }
 
 export function escapeLatex(input) {
@@ -234,6 +249,18 @@ export function normalizeMarkdown(markdown) {
 export function rewriteAndCopyAssets(markdown, assetMap, buildDir) {
   const assetDir = join(buildDir, "assets");
   mkdirSync(assetDir, { recursive: true });
+  const resolveAssetPath = (decodedPath) => {
+    const direct = assetMap.get(decodedPath);
+    if (direct && existsSync(direct)) return direct;
+
+    const basename = decodedPath.split("/").pop();
+    if (!basename) return null;
+
+    const byBasename = assetMap.get(basename);
+    if (byBasename && existsSync(byBasename)) return byBasename;
+
+    return null;
+  };
 
   return markdown.replace(
     /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g,
@@ -248,9 +275,9 @@ export function rewriteAndCopyAssets(markdown, assetMap, buildDir) {
       }
 
       const decoded = rawPath.replace(/^<|>$/g, "").replace(/^\.\//, "");
-      const sourcePath = assetMap.get(decoded);
+      const sourcePath = resolveAssetPath(decoded);
 
-      if (!sourcePath || !existsSync(sourcePath)) {
+      if (!sourcePath) {
         return full;
       }
 
@@ -372,7 +399,7 @@ export function sanitizePandocLatex(latex) {
     const combinedCaptionText = (combinedCaption || "").trim();
     const splitMarker = ` ${TABLE_CAPTION_SPLIT_TOKEN} `;
     const splitIdx = combinedCaptionText.indexOf(splitMarker);
-    const caption =
+    let caption =
       splitIdx === -1
         ? combinedCaptionText
         : combinedCaptionText.slice(0, splitIdx).trim();
@@ -380,6 +407,22 @@ export function sanitizePandocLatex(latex) {
       splitIdx === -1
         ? ""
         : combinedCaptionText.slice(splitIdx + splitMarker.length).trim();
+
+    // Extract placement parameter if present, e.g., "Results [h!]" or "Results [t*]" (for table*)
+    // We support raw [h!], escaped \[h!\], or Pandoc's {[}h!{]}
+    let placement = "t";
+    let env = "table";
+    const placementMatch = caption.match(/(?:\[|\\\[|{\[})([^\]}]+)(?:\]|\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/);
+    if (placementMatch) {
+      const raw = placementMatch[1];
+      if (raw.endsWith("*")) {
+        env = "table*";
+        placement = raw.slice(0, -1) || "t";
+      } else {
+        placement = raw;
+      }
+      caption = caption.replace(/(?:\[|\\\[|{\[})([^\]}]+)(?:\]|\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/, "").trim();
+    }
 
     headerBlock = headerBlock
       .replace(/^[ \t]*\\endhead\s*$/gm, "")
@@ -404,11 +447,12 @@ export function sanitizePandocLatex(latex) {
     const safeCols = sanitizeColumnSpec(cols, headerBlock, dataBlock);
 
     const lines = [
-      "\\begin{table}[t]",
+      `\\begin{${env}}[${placement}]`,
       "\\centering",
     ];
     if (caption) lines.push(`\\caption{${caption}}`);
-    lines.push("\\resizebox{\\columnwidth}{!}{%");
+    const width = env === "table*" ? "\\textwidth" : "\\columnwidth";
+    lines.push(`\\resizebox{${width}}{!}{%`);
     lines.push(`\\begin{tabular}{${safeCols}}`);
     if (headerBlock) lines.push(headerBlock);
     if (dataBlock) lines.push(dataBlock);
@@ -423,7 +467,7 @@ export function sanitizePandocLatex(latex) {
       lines.push(bottomCaption);
       lines.push("\\end{center}");
     }
-    lines.push("\\end{table}");
+    lines.push(`\\end{${env}}`);
     return lines.join("\n");
   };
 
@@ -437,11 +481,11 @@ export function sanitizePandocLatex(latex) {
     /\\begin\{longtable\}(?:\[[^\]]*\])?\{([\s\S]*?)\}([\s\S]*?)\\end\{longtable\}/g,
     (_m, cols, content) => {
       const captionMatch = content.match(
-        /^\s*\\caption\{([\s\S]*?)\}(?:\\tabularnewline)?\s*/
+        /\\caption\{([\s\S]*?)\}(?:\\tabularnewline)?/
       );
       const combinedCaption = captionMatch ? captionMatch[1] : "";
       const inner = captionMatch
-        ? content.slice(captionMatch[0].length)
+        ? content.replace(captionMatch[0], "")
         : content;
       return rewriteLongtable(cols, combinedCaption, inner);
     }
@@ -492,7 +536,7 @@ function ensureDocker() {
   }
 }
 
-function runPandocBuild(buildDir) {
+function runPandocBuild(buildDir, inputFile = "content.md", outputFile = "content.tex") {
   const args = [
     "run", "--rm",
     "-v", `${buildDir}:/work`,
@@ -500,15 +544,45 @@ function runPandocBuild(buildDir) {
     "pandoc/latex:latest",
     "--from=markdown+raw_tex+pipe_tables+grid_tables+simple_tables+multiline_tables+table_captions+implicit_figures+footnotes",
     "--to=latex",
+    "--no-highlight",
     "--wrap=none",
-    "--output=content.tex",
-    "content.md",
+    `--output=${outputFile}`,
+    inputFile,
   ];
   const result = spawnSync("docker", args, { stdio: "pipe" });
   if (result.status !== 0) {
     const stderr = result.stderr?.toString() ?? "";
     throw new Error(`Pandoc conversion failed:\n${stderr}`);
   }
+}
+
+function compileMarkdownSegment(buildDir, markdown, assets, fileStem) {
+  const normalized = normalizeMarkdown(markdown);
+  const mdWithAssets = rewriteAndCopyAssets(normalized.markdown, assets, buildDir);
+  const markdownFile = `${fileStem}.md`;
+  const latexFile = `${fileStem}.tex`;
+
+  writeFileSync(join(buildDir, markdownFile), `${mdWithAssets}\n`, "utf8");
+  runPandocBuild(buildDir, markdownFile, latexFile);
+
+  return {
+    normalized,
+    latex: sanitizePandocLatex(readFileSync(join(buildDir, latexFile), "utf8")),
+  };
+}
+
+function buildAppendicesLatex(appendixSections) {
+  if (appendixSections.length === 0) return "";
+
+  const lines = ["\\clearpage", "\\appendices"];
+  for (const section of appendixSections) {
+    if (section.title) {
+      lines.push(`\\section{${escapeLatex(section.title)}}`);
+    }
+    lines.push(section.latex.trim());
+  }
+
+  return `\n${lines.join("\n\n")}\n`;
 }
 
 function runLatexBuild(buildDir, entryFile) {
@@ -546,9 +620,18 @@ function runLatexBuild(buildDir, entryFile) {
  * @param {string}   opts.template     - Template name (e.g. "ieee-conference")
  * @param {Map<string, string>} [opts.assets]
  *   Map of filename → absolute path for image/asset files
+ * @param {Array<{title?: string, markdown: string}>} [opts.appendices]
+ *   Optional appendix markdown blocks to render after the main body
  * @returns {Buffer} PDF bytes
  */
-export async function compile({ markdown, frontmatter, references, template, assets = new Map() }) {
+export async function compile({
+  markdown,
+  frontmatter,
+  references,
+  template,
+  assets = new Map(),
+  appendices = [],
+}) {
   ensureDocker();
 
   const { templateDir, config } = loadTemplateConfig(template);
@@ -570,36 +653,41 @@ export async function compile({ markdown, frontmatter, references, template, ass
       );
     }
 
-    // Normalize markdown and extract abstract
-    const normalized = normalizeMarkdown(markdown);
-    const mdWithAssets = rewriteAndCopyAssets(
-      normalized.markdown,
-      assets,
-      buildDir
-    );
-
-    // Write content.md for Pandoc
-    writeFileSync(join(buildDir, "content.md"), `${mdWithAssets}\n`, "utf8");
-
-    // Run Pandoc: content.md → content.tex
-    runPandocBuild(buildDir);
+    const main = compileMarkdownSegment(buildDir, markdown, assets, "content");
+    const appendixSections = appendices
+      .filter((entry) => typeof entry?.markdown === "string" && entry.markdown.trim())
+      .map((entry, idx) => {
+        const appendix = compileMarkdownSegment(
+          buildDir,
+          entry.markdown,
+          assets,
+          `appendix-${idx}`
+        );
+        return {
+          title:
+            typeof entry.title === "string" && entry.title.trim()
+              ? entry.title.trim()
+              : "",
+          latex: appendix.latex,
+        };
+      });
 
     // Load and render the template entry file
     const entryPath = join(buildDir, config.entry);
     const entryTemplate = readFileSync(entryPath, "utf8");
-    const bodyLatex = sanitizePandocLatex(
-      readFileSync(join(buildDir, "content.tex"), "utf8")
-    );
+    const bodyLatex = main.latex;
+    const appendicesLatex = buildAppendicesLatex(appendixSections);
 
     const vars = {
       TITLE: escapeLatex(frontmatter.title ?? "Untitled"),
       TITLE_THANKS: getTitleThanks(frontmatter.thanks),
       AUTHORS: buildAuthorBlock(frontmatter.authors ?? []),
       ABSTRACT: escapeLatex(
-        normalized.abstract || frontmatter.description || ""
+        main.normalized.abstract || frontmatter.description || ""
       ),
       INDEX_TERMS: escapeLatex((frontmatter.indexTerms ?? []).join(", ")),
       BODY_LATEX: bodyLatex,
+      APPENDICES_LATEX: appendicesLatex,
     };
 
     writeFileSync(entryPath, renderTemplate(entryTemplate, vars), "utf8");

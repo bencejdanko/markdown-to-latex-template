@@ -55,6 +55,12 @@ Compiles a Markdown document into a PDF.
   "markdown": "...",
   "references": "...",
   "template": "ieee-conference",
+  "appendices": [
+    {
+      "title": "Tool Calling Sample",
+      "markdown": "..."
+    }
+  ],
   "frontmatter": {
     "title": "My Paper",
     "description": "Abstract fallback.",
@@ -89,7 +95,7 @@ Compiles a Markdown document into a PDF.
    ```json
    { "entry": "main.tex", "output": "main.pdf" }
    ```
-3. Use `{{TITLE}}`, `{{TITLE_THANKS}}`, `{{AUTHORS}}`, `{{ABSTRACT}}`, `{{INDEX_TERMS}}`, and `{{BODY_LATEX}}` placeholders in your entry `.tex` file.
+3. Use `{{TITLE}}`, `{{TITLE_THANKS}}`, `{{AUTHORS}}`, `{{ABSTRACT}}`, `{{INDEX_TERMS}}`, `{{BODY_LATEX}}`, and `{{APPENDICES_LATEX}}` placeholders in your entry `.tex` file.
 
 ## Environment variables
 
