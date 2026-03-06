@@ -574,8 +574,12 @@ function compileMarkdownSegment(buildDir, markdown, assets, fileStem) {
 function buildAppendicesLatex(appendixSections) {
   if (appendixSections.length === 0) return "";
 
-  const lines = ["\\clearpage", "\\appendices"];
-  for (const section of appendixSections) {
+  const lines = ["\\onecolumn", "\\appendices"];
+  for (let i = 0; i < appendixSections.length; i++) {
+    const section = appendixSections[i];
+    if (i > 0) {
+      lines.push("\\clearpage");
+    }
     if (section.title) {
       lines.push(`\\section{${escapeLatex(section.title)}}`);
     }
