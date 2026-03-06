@@ -231,6 +231,10 @@ export function normalizeMarkdown(markdown) {
   // Strip trailing references section (BibTeX prints its own)
   out = out.replace(/(?:^|\n)#{1,6}\s+References\s*\n[\s\S]*$/i, "\n");
 
+  // Strip emoji and supplementary-plane Unicode (U+1F000+) that pdflatex
+  // cannot handle without special packages.
+  out = out.replace(/[\u{1F000}-\u{1FFFF}]/gu, "");
+
   return {
     abstract: abstract.content.replace(/\s+/g, " ").trim(),
     markdown: out.trim(),
@@ -412,7 +416,7 @@ export function sanitizePandocLatex(latex) {
     // We support raw [h!], escaped \[h!\], or Pandoc's {[}h!{]}
     let placement = "t";
     let env = "table";
-    const placementMatch = caption.match(/(?:\[|\\\[|{\[})([^\]}]+)(?:\]|\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/);
+    const placementMatch = caption.match(/(?:\[|\\\\[|{\\[})([^\]}]+)(?:\]|\\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/);
     if (placementMatch) {
       const raw = placementMatch[1];
       if (raw.endsWith("*")) {
@@ -421,7 +425,7 @@ export function sanitizePandocLatex(latex) {
       } else {
         placement = raw;
       }
-      caption = caption.replace(/(?:\[|\\\[|{\[})([^\]}]+)(?:\]|\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/, "").trim();
+      caption = caption.replace(/(?:\[|\\\\[|{\\[})([^\]}]+)(?:\]|\\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/, "").trim();
     }
 
     headerBlock = headerBlock
@@ -597,14 +601,16 @@ function runLatexBuild(buildDir, entryFile) {
     "texlive/texlive:latest",
     "latexmk",
     "-pdf",
+    "-bibtex",
+    "-f",
     "-interaction=nonstopmode",
-    "-halt-on-error",
     entryFile,
   ];
   const result = spawnSync("docker", args, { stdio: "pipe" });
   if (result.status !== 0) {
+    const stdout = result.stdout?.toString() ?? "";
     const stderr = result.stderr?.toString() ?? "";
-    throw new Error(`LaTeX build failed:\n${stderr}`);
+    throw new Error(`LaTeX build failed:\n${stderr || stdout}`);
   }
 }
 
