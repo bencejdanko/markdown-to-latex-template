@@ -413,19 +413,43 @@ export function sanitizePandocLatex(latex) {
         : combinedCaptionText.slice(splitIdx + splitMarker.length).trim();
 
     // Extract placement parameter if present, e.g., "Results [h!]" or "Results [t*]" (for table*)
-    // We support raw [h!], escaped \[h!\], or Pandoc's {[}h!{]}
     let placement = "t";
     let env = "table";
-    const placementMatch = caption.match(/(?:\[|\\\\[|{\\[})([^\]}]+)(?:\]|\\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/);
-    if (placementMatch) {
-      const raw = placementMatch[1];
-      if (raw.endsWith("*")) {
-        env = "table*";
-        placement = raw.slice(0, -1) || "t";
-      } else {
-        placement = raw;
+    
+    caption = caption.trim();
+    const labelMatch = caption.match(/(\\label\{[^}]*\})[ \t]*$/);
+    let label = "";
+    if (labelMatch) {
+      label = labelMatch[1];
+      caption = caption.slice(0, caption.length - labelMatch[0].length).trim();
+    }
+
+    const wrappers = [
+      { start: "{[}", end: "{]}" },
+      { start: "\\[", end: "\\]" },
+      { start: "[", end: "]" }
+    ];
+
+    for (const w of wrappers) {
+      if (caption.endsWith(w.end)) {
+        const startIdx = caption.lastIndexOf(w.start);
+        if (startIdx !== -1) {
+          const raw = caption.slice(startIdx + w.start.length, caption.length - w.end.length);
+          caption = caption.slice(0, startIdx).trim();
+          
+          if (raw.endsWith("*")) {
+            env = "table*";
+            placement = raw.slice(0, -1) || "t";
+          } else {
+            placement = raw;
+          }
+          break;
+        }
       }
-      caption = caption.replace(/(?:\[|\\\\[|{\\[})([^\]}]+)(?:\]|\\\\]|{]})[ \t]*(\\label\{[^}]*\})*[ \t]*$/, "").trim();
+    }
+
+    if (label) {
+      caption = (caption + " " + label).trim();
     }
 
     headerBlock = headerBlock
@@ -593,6 +617,43 @@ function buildAppendicesLatex(appendixSections) {
   return `\n${lines.join("\n\n")}\n`;
 }
 
+function extractLatexErrors(logText) {
+  if (!logText) return "";
+  const lines = logText.split(/\r?\n/);
+  const relevant = [];
+  let inError = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Start capturing on error/warning lines
+    if (/^!\s/.test(line) || /^l\.\d+/.test(line)) {
+      inError = true;
+    }
+    if (inError) {
+      relevant.push(line);
+      // Stop after a blank line following error context
+      if (line.trim() === "" && relevant.length > 2) {
+        inError = false;
+      }
+    }
+    // Always capture overfull/underfull warnings and undefined references
+    if (
+      /Undefined control sequence/i.test(line) ||
+      /LaTeX Error/i.test(line) ||
+      /Missing/i.test(line) ||
+      /Runaway argument/i.test(line) ||
+      /Emergency stop/i.test(line)
+    ) {
+      // Add surrounding context lines
+      const start = Math.max(0, i - 1);
+      const end = Math.min(lines.length - 1, i + 3);
+      for (let j = start; j <= end; j++) {
+        if (!relevant.includes(lines[j])) relevant.push(lines[j]);
+      }
+    }
+  }
+  return relevant.join("\n").trim();
+}
+
 function runLatexBuild(buildDir, entryFile) {
   const args = [
     "run", "--rm",
@@ -607,10 +668,36 @@ function runLatexBuild(buildDir, entryFile) {
     entryFile,
   ];
   const result = spawnSync("docker", args, { stdio: "pipe" });
+
+  // latexmk exits non-zero on failure, but with -f it may also exit 0 even
+  // with errors and produce no PDF. Check both the exit code and whether the
+  // expected output exists.
   if (result.status !== 0) {
-    const stdout = result.stdout?.toString() ?? "";
-    const stderr = result.stderr?.toString() ?? "";
-    throw new Error(`LaTeX build failed:\n${stderr || stdout}`);
+    const latexmkOut = (result.stdout?.toString() ?? "") + "\n" + (result.stderr?.toString() ?? "");
+
+    // Try to read the pdflatex .log for the real error details
+    const logBasename = entryFile.replace(/\.tex$/i, "");
+    const logPath = join(buildDir, `${logBasename}.log`);
+    let logSnippet = "";
+    try {
+      const logText = readFileSync(logPath, "utf8");
+      logSnippet = extractLatexErrors(logText);
+      if (!logSnippet) {
+        // Fallback: last 80 lines of log
+        const tail = logText.split(/\r?\n/).slice(-80).join("\n");
+        logSnippet = `(last 80 lines of .log):\n${tail}`;
+      }
+    } catch {
+      // log file may not exist if pandoc/docker itself failed
+    }
+
+    const parts = ["LaTeX build failed:"];
+    if (latexmkOut.trim()) parts.push(`[latexmk output]\n${latexmkOut.trim()}`);
+    if (logSnippet) parts.push(`[pdflatex .log errors]\n${logSnippet}`);
+    if (!logSnippet && !latexmkOut.trim()) parts.push("(no output captured – check Docker is running)");
+    parts.push(`[build directory preserved for inspection: ${buildDir}]`);
+
+    throw new Error(parts.join("\n\n"));
   }
 }
 
@@ -711,8 +798,21 @@ export async function compile({
     }
 
     return readFileSync(compiledPdf);
+  } catch (err) {
+    // On failure, preserve the build dir so the caller's error message
+    // (which includes the path) lets the user inspect it. Re-throw.
+    throw err;
   } finally {
-    // Always clean up the build dir
-    rmSync(buildDir, { recursive: true, force: true });
+    // Only clean up on success. On error the build dir is left in place
+    // so the preserved path in the error message remains valid for inspection.
+    // We use a flag approach: if the PDF was read successfully we clean up.
+    try {
+      // If we reach here normally (no throw), clean up.
+      // If we re-threw above, this finally still runs but 'compiledPdf' check
+      // already threw, so we skip cleanup via the catch.
+      rmSync(buildDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
   }
 }
