@@ -454,8 +454,9 @@ export function sanitizePandocLatex(latex) {
       "\\centering",
     ];
     if (caption) lines.push(`\\caption{${caption}}`);
-    const width = env === "table*" ? "\\textwidth" : "\\columnwidth";
-    lines.push(`\\resizebox{${width}}{!}{%`);
+    const targetWidth = env === "table*" ? "\\textwidth" : "\\columnwidth";
+    lines.push("\\footnotesize");
+    lines.push(`\\resizebox{\\ifdim\\width>${targetWidth} ${targetWidth}\\else\\width\\fi}{!}{%`);
     lines.push(`\\begin{tabular}{${safeCols}}`);
     if (headerBlock) lines.push(headerBlock);
     if (dataBlock) lines.push(dataBlock);
