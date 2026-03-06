@@ -183,8 +183,9 @@ export function normalizeMarkdown(markdown) {
   const abstract = extractSection(out, "Abstract");
   out = abstract.markdown;
 
-  // Support identification labels like {#fig:label} or {#tbl:label}
-  out = out.replace(/\{#([A-Za-z0-9:_.-]+)\}/g, "\\label{$1}");
+  // Support identification labels in headings specifically. 
+  // We avoid a global replace to prevent mangling code blocks or other text.
+  out = out.replace(/^(#{1,6}.*?)\s*\{#([A-Za-z0-9:_.-]+)\}\s*$/gm, "$1 \\label{$2}");
 
   // Promote headings one level (title already in frontmatter)
   out = out.replace(/^(#{2,6})\s+/gm, (_m, hashes) => `${hashes.slice(1)} `);
@@ -410,46 +411,17 @@ export function sanitizePandocLatex(latex) {
       splitIdx === -1
         ? combinedCaptionText
         : combinedCaptionText.slice(0, splitIdx).trim();
+    // Parse attributes (label, placement, environment) recursively to handle any order
+    const attr = parseLaTeXAttributes(caption, "t", "table");
+    caption = attr.cleanText;
+    let label = attr.label;
+    let placement = attr.placement;
+    let env = attr.env;
+
     const bottomCaption =
       splitIdx === -1
         ? ""
         : combinedCaptionText.slice(splitIdx + splitMarker.length).trim();
-
-    // Extract placement parameter if present, e.g., "Results [h!]" or "Results [t*]" (for table*)
-    let placement = "t";
-    let env = "table";
-    
-    caption = caption.trim();
-    const labelMatch = caption.match(/(\\label\{[^}]*\})[ \t]*$/);
-    let label = "";
-    if (labelMatch) {
-      label = labelMatch[1];
-      caption = caption.slice(0, caption.length - labelMatch[0].length).trim();
-    }
-
-    const wrappers = [
-      { start: "{[}", end: "{]}" },
-      { start: "\\[", end: "\\]" },
-      { start: "[", end: "]" }
-    ];
-
-    for (const w of wrappers) {
-      if (caption.endsWith(w.end)) {
-        const startIdx = caption.lastIndexOf(w.start);
-        if (startIdx !== -1) {
-          const raw = caption.slice(startIdx + w.start.length, caption.length - w.end.length);
-          caption = caption.slice(0, startIdx).trim();
-          
-          if (raw.endsWith("*")) {
-            env = "table*";
-            placement = raw.slice(0, -1) || "t";
-          } else {
-            placement = raw;
-          }
-          break;
-        }
-      }
-    }
 
     if (label) {
       caption = (caption + " " + label).trim();
@@ -546,37 +518,11 @@ export function sanitizePandocLatex(latex) {
         if (contentEnd > contentStart) {
           let captionText = newInner.slice(contentStart, contentEnd);
           const originalCaption = captionText;
-
-          const labelMatch = captionText.match(/(\\label\{[^}]*\})[ \t]*$/);
-          let label = "";
-          if (labelMatch) {
-            label = labelMatch[1];
-            captionText = captionText.slice(0, captionText.length - labelMatch[0].length).trim();
-          }
-
-          const wrappers = [
-            { start: "{[}", end: "{]}" },
-            { start: "\\[", end: "\\]" },
-            { start: "[", end: "]" }
-          ];
-
-          for (const w of wrappers) {
-            if (captionText.endsWith(w.end)) {
-              const startIdx = captionText.lastIndexOf(w.start);
-              if (startIdx !== -1) {
-                const raw = captionText.slice(startIdx + w.start.length, captionText.length - w.end.length);
-                captionText = captionText.slice(0, startIdx).trim();
-                
-                if (raw.endsWith("*")) {
-                  env = "figure*";
-                  placement = raw.slice(0, -1) || "htbp";
-                } else {
-                  placement = raw;
-                }
-                break;
-              }
-            }
-          }
+          const attr = parseLaTeXAttributes(captionText, "htbp", "figure");
+          captionText = attr.cleanText;
+          let label = attr.label;
+          let placement = attr.placement;
+          env = attr.env;
 
           if (label) {
             captionText = (captionText + " " + label).trim();
@@ -595,6 +541,12 @@ export function sanitizePandocLatex(latex) {
       return `\\begin{${env}}[${placement}]${newInner}\\end{${env}}`;
     }
   );
+
+  // Unescape LaTeX commands that Pandoc might have mangled
+  out = out
+    .replace(/\\textbackslash\{\}([a-z]+)\\\{([^}]*)\\\}/gi, "\\$1{$2}")
+    .replace(/\\([a-z]+)\\\{([^}]*)\\\}/gi, "\\$1{$2}")
+    .replace(/\\textbackslash\{\}/g, "\\");
 
   return out;
 }
@@ -686,12 +638,82 @@ function buildAppendicesLatex(appendixSections) {
       lines.push("\\clearpage");
     }
     if (section.title) {
-      lines.push(`\\section{${escapeLatex(section.title)}}`);
+      const { cleanText, label } = parseLaTeXAttributes(section.title, "", "");
+      lines.push(`\\section{${escapeLatex(cleanText)}}${label || ""}`);
     }
     lines.push(section.latex.trim());
   }
 
   return `\n${lines.join("\n\n")}\n`;
+}
+
+/**
+ * Robustly extract LaTeX attributes ({#label}, [placement]) from a string.
+ * Returns { cleanText, label, placement, env }
+ * This acts as a recursive parser to handle attributes in any order.
+ */
+function parseLaTeXAttributes(text, defaultPlacement = "t", defaultEnv = "table") {
+  let label = "";
+  let placement = defaultPlacement;
+  let env = defaultEnv;
+  let cleanText = text.trim();
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    cleanText = cleanText.trim();
+
+    // 1. Match label variations: {#label}, \label{label}, or escaped variations like \{\#label\}
+    // Pandoc often escapes { as \{ and } as \}, and sometimes escapes # as \#.
+    // We match:
+    // - Standard: {#label} or \label{label}
+    // - Escaped: \{\#label\}, \{#label\}, {@label}
+    // - Backslashes: \\label{label}
+    const labelRegex = /(\{#([A-Za-z0-9:_.-]+)\}|\\label\{([^}]*)\}|\\?\{\\?#([A-Za-z0-9:_.-]+)\\?\}|\\\{\\?#([A-Za-z0-9:_.-]+)\\\})[ \t.]*$/;
+    
+    const labelMatch = cleanText.match(labelRegex);
+    if (labelMatch) {
+      const val = labelMatch[2] || labelMatch[3] || labelMatch[4] || labelMatch[5];
+      label = `\\label{${val}}`;
+      cleanText = cleanText.slice(0, cleanText.length - labelMatch[0].length).trim();
+      changed = true;
+      continue;
+    }
+
+    // 2. Match placement markers at the end: [htbp], [!h], [b*], etc.
+    const wrappers = [
+      { start: "{[}", end: "{]}" },
+      { start: "\\[", end: "\\]" },
+      { start: "[", end: "]" },
+    ];
+    for (const w of wrappers) {
+      if (cleanText.endsWith(w.end)) {
+        const startIdx = cleanText.lastIndexOf(w.start);
+        if (startIdx !== -1) {
+          const raw = cleanText.slice(
+            startIdx + w.start.length,
+            cleanText.length - w.end.length
+          );
+          // Only treat as placement if it contains expected chars
+          if (/^[a-zA-Z0-9!*]+$/.test(raw)) {
+            const potentialEnv = raw.endsWith("*") ? defaultEnv + "*" : defaultEnv;
+            const potentialPlacement = raw.endsWith("*") ? (raw.slice(0, -1) || defaultPlacement) : raw;
+
+            // Heuristic check: if it looks like a label, skip it here
+            if (!raw.startsWith("fig:") && !raw.startsWith("tbl:") && !raw.startsWith("sec:")) {
+                cleanText = cleanText.slice(0, startIdx).trim();
+                env = potentialEnv;
+                placement = potentialPlacement;
+                changed = true;
+                break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { cleanText, label, placement, env };
 }
 
 function extractLatexErrors(logText) {
