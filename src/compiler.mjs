@@ -183,6 +183,9 @@ export function normalizeMarkdown(markdown) {
   const abstract = extractSection(out, "Abstract");
   out = abstract.markdown;
 
+  // Support identification labels like {#fig:label} or {#tbl:label}
+  out = out.replace(/\{#([A-Za-z0-9:_.-]+)\}/g, "\\label{$1}");
+
   // Promote headings one level (title already in frontmatter)
   out = out.replace(/^(#{2,6})\s+/gm, (_m, hashes) => `${hashes.slice(1)} `);
 
@@ -516,6 +519,80 @@ export function sanitizePandocLatex(latex) {
         ? content.replace(captionMatch[0], "")
         : content;
       return rewriteLongtable(cols, combinedCaption, inner);
+    }
+  );
+
+  out = out.replace(
+    /\\begin\{figure\}(?:\[[^\]]*\])?([\s\S]*?)\\end\{figure\}/g,
+    (_m, inner) => {
+      let env = "figure";
+      let placement = "htbp";
+      let newInner = inner;
+
+      const capIdx = newInner.indexOf("\\caption{");
+      if (capIdx !== -1) {
+        let braceCount = 1;
+        let contentStart = capIdx + 9;
+        let contentEnd = contentStart;
+        for (let i = contentStart; i < newInner.length; i++) {
+          if (newInner[i] === "{") braceCount++;
+          else if (newInner[i] === "}") braceCount--;
+          if (braceCount === 0) {
+            contentEnd = i;
+            break;
+          }
+        }
+        
+        if (contentEnd > contentStart) {
+          let captionText = newInner.slice(contentStart, contentEnd);
+          const originalCaption = captionText;
+
+          const labelMatch = captionText.match(/(\\label\{[^}]*\})[ \t]*$/);
+          let label = "";
+          if (labelMatch) {
+            label = labelMatch[1];
+            captionText = captionText.slice(0, captionText.length - labelMatch[0].length).trim();
+          }
+
+          const wrappers = [
+            { start: "{[}", end: "{]}" },
+            { start: "\\[", end: "\\]" },
+            { start: "[", end: "]" }
+          ];
+
+          for (const w of wrappers) {
+            if (captionText.endsWith(w.end)) {
+              const startIdx = captionText.lastIndexOf(w.start);
+              if (startIdx !== -1) {
+                const raw = captionText.slice(startIdx + w.start.length, captionText.length - w.end.length);
+                captionText = captionText.slice(0, startIdx).trim();
+                
+                if (raw.endsWith("*")) {
+                  env = "figure*";
+                  placement = raw.slice(0, -1) || "htbp";
+                } else {
+                  placement = raw;
+                }
+                break;
+              }
+            }
+          }
+
+          if (label) {
+            captionText = (captionText + " " + label).trim();
+          }
+          
+          if (captionText !== originalCaption) {
+            const bef = newInner.slice(0, contentStart);
+            const aft = newInner.slice(contentEnd);
+            newInner = bef + captionText + aft;
+            
+            // Clean up the `alt` tag which might duplicate the caption with the modifier
+            newInner = newInner.replace(`alt={${originalCaption}}`, `alt={${captionText}}`);
+          }
+        }
+      }
+      return `\\begin{${env}}[${placement}]${newInner}\\end{${env}}`;
     }
   );
 
