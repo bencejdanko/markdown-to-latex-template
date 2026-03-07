@@ -190,10 +190,12 @@ export function normalizeMarkdown(markdown) {
   // Promote headings one level (title already in frontmatter)
   out = out.replace(/^(#{2,6})\s+/gm, (_m, hashes) => `${hashes.slice(1)} `);
 
+  let hasCitations = out.includes("\\cite");
   // Convert citation syntax [@key; @key2] -> \cite{key,key2}
   out = out.replace(/\[([^\]]*@[^\]]+)\]/g, (match, inner) => {
     const keys = [...inner.matchAll(/@([A-Za-z0-9:_./-]+)/g)].map((m) => m[1]);
     if (keys.length === 0) return match;
+    hasCitations = true;
     return `\\cite{${keys.join(",")}}`;
   });
 
@@ -242,6 +244,7 @@ export function normalizeMarkdown(markdown) {
   return {
     abstract: abstract.content.replace(/\s+/g, " ").trim(),
     markdown: out.trim(),
+    hasCitations,
   };
 }
 
@@ -842,7 +845,8 @@ export async function compile({
     cpSync(templateDir, buildDir, { recursive: true });
 
     // Write references.bib
-    if (references) {
+    const hasReferences = !!(references && references.trim());
+    if (hasReferences) {
       writeFileSync(
         join(buildDir, "references.bib"),
         normalizeBibForBibtex(references),
@@ -851,6 +855,8 @@ export async function compile({
     }
 
     const main = compileMarkdownSegment(buildDir, markdown, assets, "content");
+    let hasCitations = main.normalized.hasCitations;
+
     const appendixSections = appendices
       .filter((entry) => typeof entry?.markdown === "string" && entry.markdown.trim())
       .map((entry, idx) => {
@@ -860,6 +866,9 @@ export async function compile({
           assets,
           `appendix-${idx}`
         );
+        if (appendix.normalized.hasCitations) {
+          hasCitations = true;
+        }
         return {
           title:
             typeof entry.title === "string" && entry.title.trim()
@@ -884,6 +893,9 @@ export async function compile({
       ),
       INDEX_TERMS: escapeLatex((frontmatter.indexTerms ?? []).join(", ")),
       BODY_LATEX: bodyLatex,
+      BIBLIOGRAPHY: (hasCitations && hasReferences)
+        ? "\\bibliographystyle{IEEEtran}\n\\bibliography{references}"
+        : "",
       APPENDICES_LATEX: appendicesLatex,
     };
 
