@@ -899,6 +899,14 @@ export async function compile({
       APPENDICES_LATEX: appendicesLatex,
     };
 
+    // Allow custom variables from frontmatter (capitalised)
+    for (const [key, value] of Object.entries(frontmatter)) {
+      const upperKey = key.toUpperCase();
+      if (!(upperKey in vars)) {
+        vars[upperKey] = typeof value === "string" ? escapeLatex(value) : value;
+      }
+    }
+
     writeFileSync(entryPath, renderTemplate(entryTemplate, vars), "utf8");
 
     // Run LaTeX: → PDF
