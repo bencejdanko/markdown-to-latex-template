@@ -138,7 +138,7 @@ app.post(
       return res.status(400).json({ error: "Field 'data' must be valid JSON" });
     }
 
-    const { markdown, references, template, frontmatter, appendices, preface } = payload;
+    const { markdown, references, template, frontmatter, appendices, preface, backmatter } = payload;
 
     if (typeof markdown !== "string" || !markdown.trim()) {
       return res.status(400).json({ error: "data.markdown is required" });
@@ -149,13 +149,15 @@ app.post(
     if (appendices !== undefined && !Array.isArray(appendices)) {
       return res.status(400).json({ error: "data.appendices must be an array" });
     }
+    if (backmatter !== undefined && !Array.isArray(backmatter)) {
+      return res.status(400).json({ error: "data.backmatter must be an array" });
+    }
 
-    // Build asset map from uploaded files
     const assetFiles = req.files?.assets ?? [];
     const assetMap = new Map();
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+
     for (const file of assetFiles) {
-      // Write to a temp location so compiler can copy them
-      // We use in-memory buffers: write to OS temp then map by originalname
       const tmpPath = join(
         import.meta.dirname,
         "..",
@@ -163,7 +165,6 @@ app.post(
         "uploads",
         `${Date.now()}-${file.originalname}`
       );
-      const { mkdirSync, writeFileSync } = await import("node:fs");
       mkdirSync(join(import.meta.dirname, "..", ".tmp", "uploads"), {
         recursive: true,
       });
@@ -180,6 +181,7 @@ app.post(
         references: references ?? "",
         template,
         appendices: appendices ?? [],
+        backmatter: backmatter ?? [],
         assets: assetMap,
       });
     } catch (err) {

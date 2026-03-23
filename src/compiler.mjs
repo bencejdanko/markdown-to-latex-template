@@ -873,6 +873,7 @@ export async function compile({
   template,
   assets = new Map(),
   appendices = [],
+  backmatter = [],
 }) {
   ensureDocker();
 
@@ -931,11 +932,46 @@ export async function compile({
         };
       });
 
+    const backmatterSections = (typeof backmatter !== "undefined" ? backmatter : [])
+      .filter((entry) => typeof entry?.markdown === "string" && entry.markdown.trim())
+      .map((entry, idx) => {
+        const back = compileMarkdownSegment(
+          buildDir,
+          entry.markdown,
+          assets,
+          `backmatter-${idx}`,
+          config
+        );
+        if (back.normalized.hasCitations) {
+          hasCitations = true;
+        }
+        return {
+          title: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : "",
+          latex: back.latex,
+        };
+      });
+
+
     // Load and render the template entry file
     const entryPath = join(buildDir, config.entry);
     const entryTemplate = readFileSync(entryPath, "utf8");
     const bodyLatex = main.latex;
     const appendicesLatex = buildAppendicesLatex(appendixSections, config);
+
+
+    const buildBackmatterLatex = (sections) => {
+      if (!sections || sections.length === 0) return "";
+      const out = [];
+      for (const sect of sections) {
+        if (sect.title) {
+          const heading = config.topLevelDivision === "chapter" ? "chapter" : "section";
+          out.push(`\\\${heading}{${sect.title}}`);
+        }
+        out.push(sect.latex.trim());
+      }
+      return `\n${out.join("\n\n")}\n`;
+    };
+    const backmatterLatex = buildBackmatterLatex(backmatterSections);
 
     const vars = {
       TITLE: escapeLatex(frontmatter.title ?? "Untitled"),
@@ -951,6 +987,7 @@ export async function compile({
         ? "\\bibliographystyle{IEEEtran}\n\\bibliography{references}"
         : "",
       APPENDICES_LATEX: appendicesLatex,
+      BACKMATTER_LATEX: backmatterLatex,
     };
 
     // Allow custom variables from frontmatter (capitalised)
