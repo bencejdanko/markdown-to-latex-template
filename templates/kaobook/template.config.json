@@ -1,0 +1,12 @@
+{
+  "entry": "main.tex",
+  "output": "main.pdf",
+  "topLevelDivision": "chapter",
+  "promoteHeadings": false,
+  "appendixCommands": [
+    "\\appendix"
+  ],
+  "appendixHeading": "chapter",
+  "clearpageBetweenAppendices": false,
+  "bibliographyStyle": "none"
+}

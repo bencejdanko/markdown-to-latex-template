@@ -1,0 +1,160 @@
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[
+	a4paper,
+	fontsize=10pt,
+	twoside=true,
+	numbers=noenddot,
+]{kaobook}
+
+% Language
+\ifxetexorluatex
+	\usepackage{polyglossia}
+	\setmainlanguage{english}
+\else
+	\usepackage[english]{babel}
+\fi
+\usepackage[english=british]{csquotes}
+
+% Pandoc compatibility shims
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\pandocbounded}[1]{#1}
+
+% Typography extras
+\usepackage{microtype}
+\usepackage{xspace}
+
+% Load bibliography packages
+\usepackage{kaobiblio}
+\addbibresource{main.bib}
+\IfFileExists{references.bib}{\addbibresource{references.bib}}{}
+
+% Mathematical packages
+\usepackage[framed=true]{kaotheorems}
+
+% Hyperreferences
+\usepackage{kaorefs}
+
+\graphicspath{{images/}{assets/}}
+
+\makeindex[columns=3, title=Alphabetical Index, intoc]
+\makeglossaries
+\input{glossary.tex}
+\makenomenclature
+
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+%----------------------------------------------------------------------------------------
+%	BOOK INFORMATION
+%----------------------------------------------------------------------------------------
+
+\titlehead{{{TITLE_HEAD}}}
+\subject{{{SUBJECT}}}
+
+\title[{{TITLE}}]{{{TITLE}}}
+\subtitle{{{SUBTITLE}}}
+
+{{AUTHOR_BLOCK}}
+
+\date{\today}
+
+\publishers{{{PUBLISHERS}}}
+
+%----------------------------------------------------------------------------------------
+
+\frontmatter
+
+%----------------------------------------------------------------------------------------
+%	COPYRIGHT PAGE
+%----------------------------------------------------------------------------------------
+
+\makeatletter
+\uppertitleback{{{TITLE_HEAD}}}
+
+\lowertitleback{
+	\textbf{Disclaimer}\\
+	{{DISCLAIMER}}
+
+	\medskip
+
+	\textbf{Editors}\\
+	{{EDITORS_LINE}}
+
+	\medskip
+
+	\textbf{Colophon} \\
+	This document was typeset with the help of \href{https://sourceforge.net/projects/koma-script/}{\KOMAScript} and \href{https://www.latex-project.org/}{\LaTeX} using the \href{https://github.com/fmarotta/kaobook/}{kaobook} class.
+}
+\makeatother
+
+%----------------------------------------------------------------------------------------
+%	DEDICATION
+%----------------------------------------------------------------------------------------
+
+{{DEDICATION_BLOCK}}
+
+%----------------------------------------------------------------------------------------
+%	OUTPUT TITLE PAGE AND PREVIOUS
+%----------------------------------------------------------------------------------------
+
+\maketitle
+
+%----------------------------------------------------------------------------------------
+%	TABLE OF CONTENTS & LIST OF FIGURES/TABLES
+%----------------------------------------------------------------------------------------
+
+\begingroup
+
+\setlength{\textheight}{230\hscale}
+\etocstandarddisplaystyle
+\etocstandardlines
+
+\tableofcontents
+\listoffigures
+
+\let\cleardoublepage\bigskip
+\let\clearpage\bigskip
+
+\listoftables
+
+\endgroup
+
+%----------------------------------------------------------------------------------------
+%	MAIN BODY
+%----------------------------------------------------------------------------------------
+
+{{PREFACE_LATEX}}
+
+\mainmatter
+\setchapterstyle{kao}
+
+{{BODY_LATEX}}
+
+{{APPENDICES_LATEX}}
+
+%----------------------------------------------------------------------------------------
+
+\backmatter
+\setchapterstyle{plain}
+
+%----------------------------------------------------------------------------------------
+%	BIBLIOGRAPHY
+%----------------------------------------------------------------------------------------
+
+\defbibnote{bibnote}{Here are the references in citation order.\par\bigskip}
+\printbibliography[heading=bibintoc, title=Bibliography, prenote=bibnote]
+
+%----------------------------------------------------------------------------------------
+%	INDEX
+%----------------------------------------------------------------------------------------
+
+\printindex
+
+%----------------------------------------------------------------------------------------
+
+\end{document}

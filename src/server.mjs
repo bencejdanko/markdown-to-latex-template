@@ -138,7 +138,7 @@ app.post(
       return res.status(400).json({ error: "Field 'data' must be valid JSON" });
     }
 
-    const { markdown, references, template, frontmatter, appendices } = payload;
+    const { markdown, references, template, frontmatter, appendices, preface } = payload;
 
     if (typeof markdown !== "string" || !markdown.trim()) {
       return res.status(400).json({ error: "data.markdown is required" });
@@ -175,6 +175,7 @@ app.post(
     try {
       pdfBuffer = await compile({
         markdown,
+        preface,
         frontmatter: frontmatter ?? {},
         references: references ?? "",
         template,

@@ -177,18 +177,20 @@ function normalizeTableCaptions(markdown) {
   return out.join("\n");
 }
 
-export function normalizeMarkdown(markdown) {
+export function normalizeMarkdown(markdown, config = {}) {
   let out = markdown;
-
+ 
   const abstract = extractSection(out, "Abstract");
   out = abstract.markdown;
-
+ 
   // Support identification labels in headings specifically. 
   // We avoid a global replace to prevent mangling code blocks or other text.
   out = out.replace(/^(#{1,6}.*?)\s*\{#([A-Za-z0-9:_.-]+)\}\s*$/gm, "$1 \\label{$2}");
-
+ 
   // Promote headings one level (title already in frontmatter)
-  out = out.replace(/^(#{2,6})\s+/gm, (_m, hashes) => `${hashes.slice(1)} `);
+  if (config.promoteHeadings !== false) {
+    out = out.replace(/^(#{2,6})\s+/gm, (_m, hashes) => `${hashes.slice(1)} `);
+  }
 
   let hasCitations = out.includes("\\cite");
   // Convert citation syntax [@key; @key2] -> \cite{key,key2}
@@ -273,7 +275,7 @@ export function rewriteAndCopyAssets(markdown, assetMap, buildDir) {
     return null;
   };
 
-  return markdown.replace(
+  let rewritten = markdown.replace(
     /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g,
     (full, alt, rawPath, title) => {
       if (
@@ -300,6 +302,34 @@ export function rewriteAndCopyAssets(markdown, assetMap, buildDir) {
       return `![${caption}](assets/${decoded})`;
     }
   );
+
+  // Also match and copy from raw LaTeX \includegraphics{...}
+  const latexPattern = /\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/g;
+  rewritten = rewritten.replace(latexPattern, (full, rawPath) => {
+    if (
+      rawPath.startsWith("http://") ||
+      rawPath.startsWith("https://") ||
+      rawPath.startsWith("data:") ||
+      rawPath.startsWith("#")
+    ) {
+      return full;
+    }
+
+    const decoded = rawPath.replace(/^<|>$/g, "").replace(/^\.\//, "");
+    const sourcePath = resolveAssetPath(decoded);
+
+    if (!sourcePath) {
+      return full;
+    }
+
+    const target = join(assetDir, decoded);
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(sourcePath, target);
+
+    return full; // No path rewriting here; \graphicspath{{assets/}} handles it
+  });
+
+  return rewritten;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +532,7 @@ export function sanitizePandocLatex(latex) {
     /\\begin\{figure\}(?:\[[^\]]*\])?([\s\S]*?)\\end\{figure\}/g,
     (_m, inner) => {
       let env = "figure";
-      let placement = "htbp";
+      let placement = "hb";
       let newInner = inner;
 
       const capIdx = newInner.indexOf("\\caption{");
@@ -522,7 +552,7 @@ export function sanitizePandocLatex(latex) {
         if (contentEnd > contentStart) {
           let captionText = newInner.slice(contentStart, contentEnd);
           const originalCaption = captionText;
-          const attr = parseLaTeXAttributes(captionText, "htbp", "figure");
+          const attr = parseLaTeXAttributes(captionText, "hb", "figure");
           captionText = attr.cleanText;
           let label = attr.label;
           let placement = attr.placement;
@@ -576,6 +606,15 @@ function loadTemplateConfig(templateName) {
       `Invalid template config in templates/${templateName}/template.config.json`
     );
   }
+  
+  // Apply modular defaults
+  config.topLevelDivision = config.topLevelDivision ?? "section";
+  config.promoteHeadings = config.promoteHeadings ?? true;
+  config.appendixCommands = config.appendixCommands ?? ["\\onecolumn", "\\appendices"];
+  config.appendixHeading = config.appendixHeading ?? "section";
+  config.clearpageBetweenAppendices = config.clearpageBetweenAppendices ?? true;
+  config.bibliographyStyle = config.bibliographyStyle ?? "ieee";
+
   return { templateDir, config };
 }
 
@@ -597,7 +636,7 @@ function ensureDocker() {
   }
 }
 
-function runPandocBuild(buildDir, inputFile = "content.md", outputFile = "content.tex") {
+function runPandocBuild(buildDir, inputFile = "content.md", outputFile = "content.tex", topLevelDivision = "section") {
   const args = [
     "run", "--rm",
     "-v", `${buildDir}:/work`,
@@ -607,6 +646,7 @@ function runPandocBuild(buildDir, inputFile = "content.md", outputFile = "conten
     "--to=latex",
     "--no-highlight",
     "--wrap=none",
+    `--top-level-division=${topLevelDivision}`,
     `--output=${outputFile}`,
     inputFile,
   ];
@@ -617,14 +657,14 @@ function runPandocBuild(buildDir, inputFile = "content.md", outputFile = "conten
   }
 }
 
-function compileMarkdownSegment(buildDir, markdown, assets, fileStem) {
-  const normalized = normalizeMarkdown(markdown);
+function compileMarkdownSegment(buildDir, markdown, assets, fileStem, config = {}) {
+  const normalized = normalizeMarkdown(markdown, config);
   const mdWithAssets = rewriteAndCopyAssets(normalized.markdown, assets, buildDir);
   const markdownFile = `${fileStem}.md`;
   const latexFile = `${fileStem}.tex`;
 
   writeFileSync(join(buildDir, markdownFile), `${mdWithAssets}\n`, "utf8");
-  runPandocBuild(buildDir, markdownFile, latexFile);
+  runPandocBuild(buildDir, markdownFile, latexFile, config.topLevelDivision ?? "section");
 
   return {
     normalized,
@@ -632,18 +672,20 @@ function compileMarkdownSegment(buildDir, markdown, assets, fileStem) {
   };
 }
 
-function buildAppendicesLatex(appendixSections) {
+function buildAppendicesLatex(appendixSections, config = {}) {
   if (appendixSections.length === 0) return "";
 
-  const lines = ["\\onecolumn", "\\appendices"];
+  const lines = [...(config.appendixCommands || ["\\onecolumn", "\\appendices"])];
+
   for (let i = 0; i < appendixSections.length; i++) {
     const section = appendixSections[i];
-    if (i > 0) {
+    if (i > 0 && config.clearpageBetweenAppendices !== false) {
       lines.push("\\clearpage");
     }
     if (section.title) {
       const { cleanText, label } = parseLaTeXAttributes(section.title, "", "");
-      lines.push(`\\section{${escapeLatex(cleanText)}}${label || ""}`);
+      const headingCmd = config.appendixHeading || "section";
+      lines.push(`\\${headingCmd}{${escapeLatex(cleanText)}}${label || ""}`);
     }
     lines.push(section.latex.trim());
   }
@@ -765,7 +807,6 @@ function runLatexBuild(buildDir, entryFile) {
     "texlive/texlive:latest",
     "latexmk",
     "-pdf",
-    "-bibtex",
     "-f",
     "-interaction=nonstopmode",
     entryFile,
@@ -826,6 +867,7 @@ function runLatexBuild(buildDir, entryFile) {
  */
 export async function compile({
   markdown,
+  preface,
   frontmatter,
   references,
   template,
@@ -840,6 +882,7 @@ export async function compile({
   const buildDir = join(BUILD_ROOT, buildId);
   mkdirSync(buildDir, { recursive: true });
 
+  let success = false;
   try {
     // Copy template files into build dir
     cpSync(templateDir, buildDir, { recursive: true });
@@ -854,8 +897,17 @@ export async function compile({
       );
     }
 
-    const main = compileMarkdownSegment(buildDir, markdown, assets, "content");
+    const main = compileMarkdownSegment(buildDir, markdown, assets, "content", config);
     let hasCitations = main.normalized.hasCitations;
+
+    let prefaceLatex = "";
+    if (typeof preface === "string" && preface.trim()) {
+      const pref = compileMarkdownSegment(buildDir, preface, assets, "preface", config);
+      prefaceLatex = pref.latex;
+      if (pref.normalized.hasCitations) {
+        hasCitations = true;
+      }
+    }
 
     const appendixSections = appendices
       .filter((entry) => typeof entry?.markdown === "string" && entry.markdown.trim())
@@ -864,7 +916,8 @@ export async function compile({
           buildDir,
           entry.markdown,
           assets,
-          `appendix-${idx}`
+          `appendix-${idx}`,
+          config
         );
         if (appendix.normalized.hasCitations) {
           hasCitations = true;
@@ -882,7 +935,7 @@ export async function compile({
     const entryPath = join(buildDir, config.entry);
     const entryTemplate = readFileSync(entryPath, "utf8");
     const bodyLatex = main.latex;
-    const appendicesLatex = buildAppendicesLatex(appendixSections);
+    const appendicesLatex = buildAppendicesLatex(appendixSections, config);
 
     const vars = {
       TITLE: escapeLatex(frontmatter.title ?? "Untitled"),
@@ -893,7 +946,8 @@ export async function compile({
       ),
       INDEX_TERMS: escapeLatex((frontmatter.indexTerms ?? []).join(", ")),
       BODY_LATEX: bodyLatex,
-      BIBLIOGRAPHY: (hasCitations && hasReferences)
+      PREFACE_LATEX: prefaceLatex,
+      BIBLIOGRAPHY: (hasCitations && hasReferences && config.bibliographyStyle !== "none")
         ? "\\bibliographystyle{IEEEtran}\n\\bibliography{references}"
         : "",
       APPENDICES_LATEX: appendicesLatex,
@@ -903,7 +957,8 @@ export async function compile({
     for (const [key, value] of Object.entries(frontmatter)) {
       const upperKey = key.toUpperCase();
       if (!(upperKey in vars)) {
-        vars[upperKey] = typeof value === "string" ? escapeLatex(value) : value;
+        const skipEscape = upperKey.endsWith("_BLOCK") || upperKey.endsWith("_LATEX") || upperKey.endsWith("_LINE") || upperKey.endsWith("_BODY");
+        vars[upperKey] = (typeof value === "string" && !skipEscape) ? escapeLatex(value) : value;
       }
     }
 
@@ -917,6 +972,7 @@ export async function compile({
       throw new Error(`Expected output PDF was not produced: ${config.output}`);
     }
 
+    success = true;
     return readFileSync(compiledPdf);
   } catch (err) {
     // On failure, preserve the build dir so the caller's error message
@@ -925,12 +981,10 @@ export async function compile({
   } finally {
     // Only clean up on success. On error the build dir is left in place
     // so the preserved path in the error message remains valid for inspection.
-    // We use a flag approach: if the PDF was read successfully we clean up.
     try {
-      // If we reach here normally (no throw), clean up.
-      // If we re-threw above, this finally still runs but 'compiledPdf' check
-      // already threw, so we skip cleanup via the catch.
-      rmSync(buildDir, { recursive: true, force: true });
+      if (success) {
+        rmSync(buildDir, { recursive: true, force: true });
+      }
     } catch {
       // Ignore cleanup errors
     }
